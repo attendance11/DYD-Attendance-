@@ -1,0 +1,983 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Class Attendance</title>
+
+<!-- ===== FIREBASE SETUP =====
+1. Go to https://console.firebase.google.com -> Create a project (free)
+2. In the project, go to "Build" -> "Realtime Database" -> Create Database -> start in TEST MODE
+3. Go to Project Settings (gear icon) -> scroll to "Your apps" -> click the web icon (</>) -> register app
+4. Copy the firebaseConfig object it gives you and paste it below, replacing the placeholder
+5. In Realtime Database -> Rules tab, set rules to:
+   { "rules": { ".read": true, ".write": true } }
+   (This makes it open for your class to use. It is NOT secure for sensitive data,
+   but fine for a simple attendance tool. You can restrict it later if you want.)
+============================= -->
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+<script>
+  const firebaseConfig = {
+    apiKey: "AIzaSyDD0jEiyBrWHor2S_6O6KHsb-NnW6h2vrw",
+    authDomain: "class-attendance-39b27.firebaseapp.com",
+    databaseURL: "https://class-attendance-39b27-default-rtdb.firebaseio.com",
+    projectId: "class-attendance-39b27",
+    storageBucket: "class-attendance-39b27.firebasestorage.app",
+    messagingSenderId: "64402452130",
+    appId: "1:64402452130:web:5a31a77b3720084f07b1fb"
+  };
+  firebase.initializeApp(firebaseConfig);
+</script>
+<style>
+  :root{
+    --ink:#1c2b22;
+    --paper:#f6f3ea;
+    --line:#d8d0bb;
+    --present:#2f6d4f;
+    --present-bg:#e3ede4;
+    --absent:#a13d2c;
+    --absent-bg:#f5e1db;
+    --accent:#c9601f;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    background:var(--paper);
+    color:var(--ink);
+    font-family:'Segoe UI', system-ui, -apple-system, sans-serif;
+    min-height:100vh;
+  }
+  header{
+    padding:20px 20px 14px;
+    border-bottom:2px solid var(--ink);
+    display:flex;
+    justify-content:space-between;
+    align-items:flex-start;
+    gap:10px;
+  }
+  h1{ margin:0; font-size:21px; letter-spacing:-0.01em; }
+  .sub{ margin:6px 0 0; font-size:13px; color:#5a5347; }
+  .nav-actions{ display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end; }
+  .icon-btn{
+    background:none; border:1px solid var(--ink); border-radius:8px;
+    padding:8px 12px; font-size:13px; font-weight:600; cursor:pointer;
+    color:var(--ink); white-space:nowrap;
+  }
+  .datebar{
+    display:flex; justify-content:space-between; align-items:center;
+    padding:14px 20px; font-size:14px; border-bottom:1px solid var(--line); background:#efe9db;
+  }
+  .stats{ display:flex; gap:14px; }
+  .stat-present{color:var(--present); font-weight:600;}
+  .stat-absent{color:var(--absent); font-weight:600;}
+
+  main{ padding:14px 16px 100px; max-width:520px; margin:0 auto; }
+
+  .role-select{ display:flex; flex-direction:column; gap:14px; padding:40px 4px; }
+  .role-card{
+    text-align:left; background:#fff; border:1px solid var(--line); border-radius:14px;
+    padding:22px; cursor:pointer;
+  }
+  .role-card h2{ margin:0 0 6px; font-size:18px; }
+  .role-card p{ margin:0; font-size:14px; color:#6b6455; }
+
+  .empty-state{ text-align:center; padding:60px 20px; color:#6b6455; }
+  .empty-state button{ margin-top:16px; }
+
+  .class-picker{
+    background:#fff; border:1px solid var(--line); border-radius:12px;
+    padding:14px; margin-bottom:14px;
+  }
+  .class-picker .row{ display:flex; gap:8px; margin-bottom:10px; }
+  .class-picker .row:last-child{ margin-bottom:0; }
+  .class-heading{ font-size:13px; color:#5a5347; line-height:1.5; }
+  .class-heading strong{ display:block; font-size:16px; color:var(--ink); margin-bottom:2px; }
+
+  ul.roster{ list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:8px; }
+  li.student{
+    display:flex; justify-content:space-between; align-items:center;
+    padding:14px 16px; border-radius:10px; border:1px solid var(--line);
+    background:var(--present-bg); cursor:pointer; user-select:none;
+    transition:background .15s ease, border-color .15s ease;
+  }
+  li.student.absent{ background:var(--absent-bg); border-color:#e0b3a4; }
+  .roll{ font-size:12px; color:#8a8272; margin-right:8px; min-width:26px; display:inline-block; }
+  .name{ font-size:16px; font-weight:500; }
+  .status{ font-size:13px; font-weight:600; padding:4px 10px; border-radius:999px; }
+  .status.present{color:var(--present); background:#d4e5d8;}
+  .status.absent{color:var(--absent); background:#eeccc0;}
+
+  .remove-btn{ background:none; border:none; color:#9c9483; font-size:18px; padding:0 4px; margin-left:8px; cursor:pointer; }
+
+  .add-row{ display:flex; gap:8px; margin-top:18px; }
+  input[type=text], select{
+    flex:1; padding:12px 14px; border-radius:10px; border:1px solid var(--line);
+    font-size:15px; background:#fff; font-family:inherit;
+  }
+  button{
+    font-family:inherit; font-size:15px; border:none; border-radius:10px;
+    padding:12px 16px; cursor:pointer; font-weight:600;
+  }
+  .btn-primary{ background:var(--ink); color:var(--paper); }
+  .btn-ghost{ background:transparent; color:var(--ink); border:1px solid var(--ink); }
+  .btn-block{ width:100%; }
+
+  footer{
+    position:fixed; bottom:0; left:0; right:0;
+    padding:14px 16px calc(14px + env(safe-area-inset-bottom));
+    background:var(--paper); border-top:2px solid var(--ink);
+    display:flex; gap:10px; max-width:520px; margin:0 auto;
+  }
+  .btn-whatsapp{
+    flex:1; background:#2f6d4f; color:#fff; padding:14px; font-size:16px;
+    display:flex; align-items:center; justify-content:center; gap:8px;
+  }
+  .btn-reset{ background:transparent; color:var(--accent); border:1px solid var(--accent); }
+
+  .toast{
+    position:fixed; bottom:90px; left:50%; transform:translateX(-50%);
+    background:var(--ink); color:var(--paper); padding:10px 18px; border-radius:8px;
+    font-size:14px; opacity:0; pointer-events:none; transition:opacity .2s ease; z-index:20;
+  }
+  .toast.show{opacity:1;}
+  .loading{ text-align:center; padding:40px; color:#8a8272; }
+
+  .report-header{ display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:16px; flex-wrap:wrap; }
+  .report-header select{ max-width:200px; }
+  table.report{
+    width:100%; border-collapse:collapse; background:#fff; border-radius:10px;
+    overflow:hidden; border:1px solid var(--line);
+  }
+  table.report th, table.report td{ padding:10px 12px; text-align:left; border-bottom:1px solid var(--line); font-size:14px; }
+  table.report th{ background:#efe9db; font-size:12px; font-weight:700; }
+  table.report tr:last-child td{ border-bottom:none; }
+  .pct{ font-weight:700; }
+  .pct.low{color:var(--absent);}
+  .pct.mid{color:var(--accent);}
+  .pct.high{color:var(--present);}
+  .bar-wrap{ width:60px; height:6px; background:#e6e0d0; border-radius:3px; overflow:hidden; display:inline-block; vertical-align:middle; margin-right:8px; }
+  .bar-fill{ height:100%; border-radius:3px; }
+  .no-data{ text-align:center; padding:40px 20px; color:#8a8272; }
+
+  .big-pct{
+    text-align:center; padding:30px 20px; background:#fff; border-radius:14px;
+    border:1px solid var(--line); margin-bottom:16px;
+  }
+  .big-pct .num{ font-size:44px; font-weight:800; line-height:1; }
+  .big-pct .label{ font-size:13px; color:#6b6455; margin-top:6px; }
+
+  .error-msg{ color:var(--absent); font-size:13px; margin-top:8px; }
+
+  .day-row{
+    display:flex; justify-content:space-between; align-items:center;
+    padding:10px 14px; border-bottom:1px solid var(--line); font-size:14px;
+  }
+  .day-row:last-child{ border-bottom:none; }
+  .day-status{ font-size:12px; font-weight:700; padding:3px 10px; border-radius:999px; }
+
+  .tt-day{ margin-bottom:18px; }
+  .tt-day h3{ font-size:14px; margin:0 0 8px; color:var(--ink); border-bottom:1px solid var(--line); padding-bottom:6px; }
+  .tt-period{
+    display:flex; justify-content:space-between; align-items:center;
+    padding:10px 12px; border:1px solid var(--line); border-radius:8px;
+    background:#fff; margin-bottom:6px; font-size:13px; cursor:pointer;
+  }
+  .tt-period:hover{ border-color:var(--ink); }
+  .tt-time{ color:#8a8272; font-size:12px; white-space:nowrap; margin-left:8px; }
+  .tt-subject{ font-weight:600; }
+  .tt-faculty{ color:#6b6455; font-size:12px; }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1 id="titleText">Class Attendance</h1>
+    <p class="sub" id="subText">Loading...</p>
+  </div>
+  <div class="nav-actions" id="navActions"></div>
+</header>
+
+<div class="datebar" id="dateBar" style="display:none;">
+  <span id="dateLabel">—</span>
+  <div class="stats">
+    <span class="stat-present" id="presentCount">0 present</span>
+    <span class="stat-absent" id="absentCount">0 absent</span>
+  </div>
+</div>
+
+<main id="main"><div class="loading">Loading...</div></main>
+
+<footer id="footer" style="display:none;">
+  <button class="btn-reset" id="saveBtn">Save Attendance</button>
+  <button class="btn-whatsapp" id="shareBtn">Share on WhatsApp</button>
+</footer>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const ROSTER_KEY = 'roster';
+const ATT_PREFIX = 'att:';
+
+const DEFAULT_ROSTER = [
+  "Sheikh Uzair Amin","Falak ul Mwhfooz","Buraq Mohammad","Beanish Samad Mir",
+  "Rutba Riyaz","Syed Maktoob Qadri","Soha Arshad","Hazik Nazir",
+  "Tamana Sameer Khan","Saniya Bashir","Qazi Irtiqa","Nadiya",
+  "Fatima Zehra","Daniya Imtiyaz","Toiba Bint Umer","Zunain Nisar",
+  "Tafia Tahir","Ubaid Nazir","Syed Mohammad Hashir","Saqib Ramzan",
+  "Abu Baker Javaid","Hakeem Urva Tul Wuska","Shumaila Rayees","Jawwad Ahmad Javied",
+  "Owais Shabir","Tanveer Hussain Ahanger","Mehak Ajaz Bhat","Syed Burhan Javaid",
+  "Aanif Iqbal Bhat","Omehra Ul Mehfooz","Salik Shabir Rathert","Mirza Mursub Fayaz",
+  "Ghaazee Afzal","Muhammad Yahya Malik","Kamran Hamid","Momin Riyaz","Muneeb Jan"
+].map((name, i) => ({ roll: i+1, name }));
+
+const WEEKDAY_PERIODS = [
+  { time:"9:30 AM – 10:30 AM",  subject:"Critical Thinking",              faculty:"Dr. Baasit Abubakr" },
+  { time:"10:30 AM – 11:30 AM", subject:"World of Disruptive Strategies", faculty:"Dr. Farha Deeba" },
+  { time:"11:30 AM – 12:30 PM", subject:"Problem Solving from Scratch",   faculty:"Dr. Nahida Shafi" },
+  { time:"12:30 PM – 1:15 PM",  subject:"Communication Skills",           faculty:"Dr. M Ibrahim Wani" },
+  { time:"2:15 PM – 3:15 PM",   subject:"Learning Through Self Exploration", faculty:"Dr. Baasit Abubakr" },
+  { time:"3:15 PM – 4:15 PM",   subject:"Data & Excel",                   faculty:"Faculty Mentor" },
+  { time:"4:15 PM – 5:00 PM",   subject:"Project Work",                   faculty:"" }
+];
+const TIMETABLE = {
+  Monday: WEEKDAY_PERIODS,
+  Tuesday: WEEKDAY_PERIODS,
+  Wednesday: WEEKDAY_PERIODS,
+  Thursday: WEEKDAY_PERIODS,
+  Friday: [
+    { time:"9:30 AM – 1:15 PM", subject:"Capstone Project / E-Yantra Lab / Workshop / Guest Lecture", faculty:"" },
+    { time:"2:15 PM – 5:00 PM", subject:"Capstone Project / Workshop / Engineering Kitchen", faculty:"" }
+  ]
+};
+const WEEKDAY_NAMES = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
+
+const CR_PIN = '1234'; // change this to set your own CR/teacher PIN
+
+let students = []; // {id, roll, name, absent}
+let view = 'role'; // role | cr-pin | cr-mark | cr-edit | cr-report | cr-timetable | student-login | student-report
+let crUnlocked = false;
+let allSnapshots = null;
+let selectedMonth = null;
+let selectedSubject = 'ALL';
+let studentSession = null;
+
+let selectedDay = null;     // e.g. "Monday"
+let selectedPeriodIdx = 0;  // index into TIMETABLE[selectedDay]
+let customPeriod = null;    // { subject, faculty:'', time:'' } for one-off events like university visits
+let selectedDate = null;    // YYYY-MM-DD, defaults to today but CR can pick a past date to fix mistakes
+
+const main = document.getElementById('main');
+const footer = document.getElementById('footer');
+const dateBar = document.getElementById('dateBar');
+const dateLabel = document.getElementById('dateLabel');
+const presentCount = document.getElementById('presentCount');
+const absentCount = document.getElementById('absentCount');
+const toastEl = document.getElementById('toast');
+const titleText = document.getElementById('titleText');
+const subText = document.getElementById('subText');
+const navActions = document.getElementById('navActions');
+
+function todayKey(){
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+function todayLabel(){
+  return new Date().toLocaleDateString('en-IN', { weekday:'long', day:'numeric', month:'long', year:'numeric' });
+}
+function fullDateLabelOf(dateStr){
+  const [y,m,d] = dateStr.split('-').map(Number);
+  return new Date(y, m-1, d).toLocaleDateString('en-IN', { weekday:'long', day:'numeric', month:'long', year:'numeric' });
+}
+function todayWeekday(){
+  return WEEKDAY_NAMES[new Date().getDay()];
+}
+function monthKeyOf(dateStr){ return dateStr.slice(0,7); }
+function monthLabelOf(monthKey){
+  const [y,m] = monthKey.split('-');
+  return new Date(parseInt(y), parseInt(m)-1, 1).toLocaleDateString('en-IN', { month:'long', year:'numeric' });
+}
+function dateLabelOf(dateStr){
+  const [y,m,d] = dateStr.split('-').map(Number);
+  return new Date(y, m-1, d).toLocaleDateString('en-IN', { day:'numeric', month:'short', year:'numeric' });
+}
+function escapeHtml(str){
+  const d = document.createElement('div');
+  d.textContent = str;
+  return d.innerHTML;
+}
+function showToast(msg){
+  toastEl.textContent = msg;
+  toastEl.classList.add('show');
+  setTimeout(()=> toastEl.classList.remove('show'), 1800);
+}
+function slug(str){
+  return str.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/(^-|-$)/g,'');
+}
+function currentPeriod(){
+  if(customPeriod) return customPeriod;
+  const periods = TIMETABLE[selectedDay] || [];
+  return periods[selectedPeriodIdx] || periods[0] || { subject:"General", faculty:"", time:"" };
+}
+function currentAttKey(){
+  const cls = currentPeriod();
+  return `${ATT_PREFIX}${selectedDate || todayKey()}__${slug(cls.subject)}`;
+}
+
+// ---------- STORAGE (Firebase Realtime Database — works on any hosting) ----------
+function delay(ms){ return new Promise(r => setTimeout(r, ms)); }
+
+function dbRef(key){ return firebase.database().ref('attendanceApp/' + key); }
+
+async function storageGet(key, attempts=3){
+  let lastErr = null;
+  for(let i=0;i<attempts;i++){
+    try{
+      const snap = await dbRef(key).once('value');
+      return snap.exists() ? { value: snap.val() } : null;
+    }catch(e){ lastErr = e; await delay(300 * (i+1)); }
+  }
+  throw lastErr;
+}
+async function storageSet(key, value, attempts=3){
+  let lastErr = null;
+  for(let i=0;i<attempts;i++){
+    try{ await dbRef(key).set(value); return; }
+    catch(e){ lastErr = e; await delay(300 * (i+1)); }
+  }
+  throw lastErr;
+}
+async function storageList(prefix){
+  const snap = await firebase.database().ref('attendanceApp')
+    .orderByKey().startAt(prefix).endAt(prefix + '\uf8ff').once('value');
+  const keys = [];
+  snap.forEach(child => { keys.push(child.key); });
+  return { keys };
+}
+
+async function loadRoster(){
+  try{
+    const res = await storageGet(ROSTER_KEY);
+    students = res ? JSON.parse(res.value) : [];
+    return true;
+  }catch(e){ students = []; return false; }
+}
+async function saveRoster(){
+  try{ await storageSet(ROSTER_KEY, JSON.stringify(students)); }
+  catch(e){ showToast('Could not save the class list. Check your connection and try again.'); }
+}
+async function loadTodaySnapshotForPeriod(){
+  try{
+    const res = await storageGet(currentAttKey());
+    if(res){
+      const snap = JSON.parse(res.value);
+      const map = {};
+      snap.records.forEach(r => map[r.id] = r.absent);
+      students.forEach(s => { s.absent = map.hasOwnProperty(s.id) ? map[s.id] : false; });
+    }else{
+      students.forEach(s => { s.absent = false; });
+    }
+  }catch(e){ students.forEach(s => { s.absent = false; }); }
+}
+async function saveTodaySnapshotForPeriod(){
+  const cls = currentPeriod();
+  const snap = {
+    date: selectedDate || todayKey(),
+    subject: cls.subject,
+    faculty: cls.faculty,
+    time: cls.time,
+    records: students.map(s => ({ id:s.id, roll:s.roll, name:s.name, absent: !!s.absent }))
+  };
+  try{ await storageSet(currentAttKey(), JSON.stringify(snap)); }
+  catch(e){ showToast('Could not save this attendance. Check your connection and try again.'); }
+}
+async function loadAllSnapshots(){
+  const listRes = await storageList(ATT_PREFIX);
+  const keys = (listRes && listRes.keys) ? listRes.keys : [];
+  const snaps = [];
+  for(const k of keys){
+    try{
+      const r = await storageGet(k);
+      if(r) snaps.push(JSON.parse(r.value));
+    }catch(e){ /* skip this one record, keep the rest */ }
+  }
+  snaps.sort((a,b)=> a.date.localeCompare(b.date));
+  return snaps;
+}
+
+function loadDefaultRoster(){
+  const existing = new Set(students.map(s=>s.name.toLowerCase()));
+  DEFAULT_ROSTER.forEach(d => {
+    if(!existing.has(d.name.toLowerCase())){
+      students.push({ id: 's'+Date.now()+Math.random().toString(36).slice(2,6), roll:d.roll, name:d.name, absent:false });
+    }
+  });
+  saveRoster();
+  showToast('Class list loaded');
+  render();
+}
+
+// ---------- ROUTER ----------
+function goTo(v){ view = v; render(); }
+
+function setNav(buttons){
+  navActions.innerHTML = '';
+  buttons.forEach(b => {
+    const btn = document.createElement('button');
+    btn.className = 'icon-btn';
+    btn.textContent = b.label;
+    btn.onclick = b.onClick;
+    navActions.appendChild(btn);
+  });
+}
+
+function render(){
+  dateBar.style.display = 'none';
+  footer.style.display = 'none';
+
+  if(view === 'role') return renderRole();
+  if(view === 'cr-pin') return renderCrPin();
+  if(view === 'cr-mark') return renderCrMark();
+  if(view === 'cr-edit') return renderCrEdit();
+  if(view === 'cr-report') return renderCrReport();
+  if(view === 'cr-timetable') return renderTimetable();
+  if(view === 'cr-custom') return renderCrCustom();
+  if(view === 'student-login') return renderStudentLogin();
+  if(view === 'student-report') return renderStudentReport();
+}
+
+// ---------- ROLE SELECT ----------
+function renderRole(){
+  setNav([]);
+  titleText.textContent = 'Class Attendance';
+  subText.textContent = 'Choose how you want to use this app';
+  main.innerHTML = `
+    <div class="role-select">
+      <div class="role-card" id="crCard">
+        <h2>CR / Teacher</h2>
+        <p>Take daily attendance, manage the class list, and view reports</p>
+      </div>
+      <div class="role-card" id="studentCard">
+        <h2>Student</h2>
+        <p>Enter your name and roll number to view your own attendance</p>
+      </div>
+    </div>`;
+  document.getElementById('crCard').onclick = () => {
+    if(crUnlocked) enterCrMark(); else goTo('cr-pin');
+  };
+  document.getElementById('studentCard').onclick = () => goTo('student-login');
+}
+
+// ---------- CR: PIN GATE ----------
+async function enterCrMark(){
+  if(students.length === 0) await loadRoster();
+  if(!selectedDay) selectedDay = TIMETABLE[todayWeekday()] ? todayWeekday() : 'Monday';
+  if(!selectedDate) selectedDate = todayKey();
+  await loadTodaySnapshotForPeriod();
+  goTo('cr-mark');
+}
+function renderCrPin(){
+  setNav([{ label:'Home', onClick: () => goTo('role') }]);
+  titleText.textContent = 'CR / Teacher Access';
+  subText.textContent = 'Enter the PIN to continue';
+  main.innerHTML = `
+    <div class="add-row" style="margin-top:0;">
+      <input type="text" id="pinInput" placeholder="Enter PIN" inputmode="numeric">
+    </div>
+    <div class="add-row"><button class="btn-primary btn-block" id="pinSubmit">Continue</button></div>
+    <div id="pinError"></div>
+  `;
+  const pinInput = document.getElementById('pinInput');
+  async function tryPin(){
+    if(pinInput.value.trim() === CR_PIN){
+      crUnlocked = true;
+      await enterCrMark();
+    }else{
+      document.getElementById('pinError').innerHTML = `<p class="error-msg">Wrong PIN. Please try again.</p>`;
+      pinInput.value = '';
+    }
+  }
+  document.getElementById('pinSubmit').onclick = tryPin;
+  pinInput.addEventListener('keydown', e => { if(e.key==='Enter') tryPin(); });
+  pinInput.focus();
+}
+
+// ---------- CR: MARK ATTENDANCE ----------
+function updateStats(){
+  const total = students.length;
+  const absent = students.filter(s=>s.absent).length;
+  presentCount.textContent = `${total - absent} present`;
+  absentCount.textContent = `${absent} absent`;
+}
+
+function renderCrMark(){
+  setNav([
+    { label:'Timetable', onClick: () => goTo('cr-timetable') },
+    { label:'Special', onClick: () => goTo('cr-custom') },
+    { label:'Edit list', onClick: () => goTo('cr-edit') },
+    { label:'Home', onClick: () => { crUnlocked = false; selectedDate = null; goTo('role'); } }
+  ]);
+  dateBar.style.display = 'flex';
+  dateLabel.textContent = fullDateLabelOf(selectedDate || todayKey());
+  titleText.textContent = 'Mark Attendance';
+  subText.textContent = 'Tap a name to mark absent, then tap Save';
+  updateStats();
+
+  if(students.length === 0){
+    main.innerHTML = `
+      <div class="empty-state">
+        <p>No students added yet.</p>
+        <button class="btn-primary" id="loadDefaultBtn">Load class list (37 students)</button>
+        <div style="margin-top:10px;"><button class="btn-ghost" id="addFirstBtn">Or add manually</button></div>
+      </div>`;
+    document.getElementById('addFirstBtn').onclick = () => goTo('cr-edit');
+    document.getElementById('loadDefaultBtn').onclick = loadDefaultRoster;
+    return;
+  }
+
+  const days = Object.keys(TIMETABLE);
+  const periods = TIMETABLE[selectedDay] || [];
+  const cls = currentPeriod();
+  const isPastDate = selectedDate && selectedDate !== todayKey();
+
+  footer.style.display = 'flex';
+
+  const dateRow = `
+    <div class="class-picker" style="margin-bottom:10px;">
+      <div class="row" style="margin-bottom:0;">
+        <input type="date" id="dateInput" value="${selectedDate || todayKey()}" max="${todayKey()}" style="flex:1;">
+        ${isPastDate ? `<button class="btn-ghost" id="backToTodayBtn" style="flex:0 0 auto;">Today</button>` : ''}
+      </div>
+      ${isPastDate ? `<div style="font-size:12px;color:var(--accent);margin-top:8px;">Editing a past date — changes will update that day's record</div>` : ''}
+    </div>`;
+
+  let pickerHtml;
+  if(customPeriod){
+    pickerHtml = `
+      <div class="class-picker">
+        <div class="class-heading">
+          <strong>${escapeHtml(cls.subject)}</strong>
+          Special / one-off attendance
+        </div>
+        <div class="add-row" style="margin-top:10px;">
+          <button class="btn-ghost btn-block" id="backToTimetableBtn">Switch back to regular timetable</button>
+        </div>
+      </div>`;
+  }else{
+    pickerHtml = `
+      <div class="class-picker">
+        <div class="row">
+          <select id="daySelect">${days.map(d=>`<option value="${d}" ${d===selectedDay?'selected':''}>${d}</option>`).join('')}</select>
+          <select id="periodSelect">${periods.map((p,i)=>`<option value="${i}" ${i===selectedPeriodIdx?'selected':''}>${p.subject}</option>`).join('')}</select>
+        </div>
+        <div class="class-heading">
+          <strong>${escapeHtml(cls.subject)}</strong>
+          ${cls.faculty ? escapeHtml(cls.faculty) + ' &middot; ' : ''}${escapeHtml(cls.time)}
+        </div>
+      </div>`;
+  }
+
+  main.innerHTML = dateRow + pickerHtml + `<ul class="roster" id="rosterList"></ul>`;
+
+  document.getElementById('dateInput').onchange = async (e) => {
+    selectedDate = e.target.value;
+    await loadTodaySnapshotForPeriod();
+    render();
+  };
+  if(isPastDate){
+    document.getElementById('backToTodayBtn').onclick = async () => {
+      selectedDate = todayKey();
+      await loadTodaySnapshotForPeriod();
+      render();
+    };
+  }
+
+  if(!customPeriod){
+    document.getElementById('daySelect').onchange = async (e) => {
+      selectedDay = e.target.value;
+      selectedPeriodIdx = 0;
+      await loadTodaySnapshotForPeriod();
+      render();
+    };
+    document.getElementById('periodSelect').onchange = async (e) => {
+      selectedPeriodIdx = parseInt(e.target.value);
+      await loadTodaySnapshotForPeriod();
+      render();
+    };
+  }else{
+    document.getElementById('backToTimetableBtn').onclick = async () => {
+      customPeriod = null;
+      if(!selectedDay) selectedDay = TIMETABLE[todayWeekday()] ? todayWeekday() : 'Monday';
+      await loadTodaySnapshotForPeriod();
+      render();
+    };
+  }
+
+  const list = document.getElementById('rosterList');
+  students.slice().sort((a,b)=>(parseInt(a.roll)||0)-(parseInt(b.roll)||0)).forEach(s => {
+    const li = document.createElement('li');
+    li.className = 'student' + (s.absent ? ' absent' : '');
+    li.innerHTML = `
+      <span><span class="roll">#${s.roll ?? ''}</span><span class="name">${escapeHtml(s.name)}</span></span>
+      <span class="status ${s.absent ? 'absent' : 'present'}">${s.absent ? 'Absent' : 'Present'}</span>`;
+    li.onclick = () => { s.absent = !s.absent; render(); };
+    list.appendChild(li);
+  });
+
+  const saveBtn = document.getElementById('saveBtn');
+  saveBtn.onclick = async () => {
+    saveBtn.disabled = true;
+    saveBtn.textContent = 'Saving...';
+    await saveTodaySnapshotForPeriod();
+    saveBtn.textContent = 'Saved ✓';
+    setTimeout(() => {
+      saveBtn.textContent = 'Save Attendance';
+      saveBtn.disabled = false;
+    }, 1200);
+  };
+
+  document.getElementById('shareBtn').onclick = async () => {
+    await saveTodaySnapshotForPeriod();
+    const cls2 = currentPeriod();
+    const present = students.filter(s=>!s.absent).sort((a,b)=>(parseInt(a.roll)||0)-(parseInt(b.roll)||0));
+    const absent = students.filter(s=>s.absent).sort((a,b)=>(parseInt(a.roll)||0)-(parseInt(b.roll)||0));
+    let msg = `Attendance Report\n`;
+    msg += `Class: ${cls2.subject}\n`;
+    if(cls2.faculty) msg += `Faculty: ${cls2.faculty}\n`;
+    msg += `Date: ${fullDateLabelOf(selectedDate || todayKey())}\n`;
+    if(cls2.time) msg += `Time: ${cls2.time}\n`;
+    msg += `\nPresent (${present.length}):\n`;
+    msg += present.length ? present.map(s=>`${s.roll}. ${s.name}`).join('\n') : '—';
+    msg += `\n\nAbsent (${absent.length}):\n`;
+    msg += absent.length ? absent.map(s=>`${s.roll}. ${s.name}`).join('\n') : 'None';
+    window.open('https://wa.me/?text=' + encodeURIComponent(msg), '_blank');
+  };
+}
+
+// ---------- CR: SPECIAL / ONE-OFF ATTENDANCE ----------
+function renderCrCustom(){
+  setNav([{ label:'Back', onClick: () => goTo('cr-mark') }]);
+  titleText.textContent = 'Special Attendance';
+  subText.textContent = 'For events that are not in the regular timetable';
+  main.innerHTML = `
+    <div class="add-row" style="margin-top:0;">
+      <input type="text" id="eventName" placeholder="e.g. University Visit, Seminar, Function">
+    </div>
+    <div class="add-row"><button class="btn-primary btn-block" id="startBtn">Start Attendance</button></div>
+    <p style="font-size:13px;color:#6b6455;margin-top:14px;">This will use your existing class list. It will be saved as its own record for today, separate from the regular timetable subjects.</p>
+  `;
+  const input = document.getElementById('eventName');
+  async function start(){
+    const name = input.value.trim();
+    if(!name) return;
+    customPeriod = { subject: name, faculty:'', time:'' };
+    await loadTodaySnapshotForPeriod();
+    goTo('cr-mark');
+  }
+  document.getElementById('startBtn').onclick = start;
+  input.addEventListener('keydown', e => { if(e.key==='Enter') start(); });
+  input.focus();
+}
+
+// ---------- CR: TIMETABLE ----------
+function renderTimetable(){
+  setNav([{ label:'Back', onClick: () => goTo('cr-mark') }]);
+  titleText.textContent = 'Weekly Timetable';
+  subText.textContent = 'Tap a class to take attendance for it';
+  let html = '';
+  Object.keys(TIMETABLE).forEach(day => {
+    html += `<div class="tt-day"><h3>${day}</h3>`;
+    TIMETABLE[day].forEach((p, i) => {
+      html += `
+        <div class="tt-period" data-day="${day}" data-idx="${i}">
+          <div>
+            <div class="tt-subject">${escapeHtml(p.subject)}</div>
+            ${p.faculty ? `<div class="tt-faculty">${escapeHtml(p.faculty)}</div>` : ''}
+          </div>
+          <div class="tt-time">${escapeHtml(p.time)}</div>
+        </div>`;
+    });
+    html += `</div>`;
+  });
+  main.innerHTML = html;
+  main.querySelectorAll('.tt-period').forEach(el => {
+    el.onclick = async () => {
+      customPeriod = null;
+      selectedDay = el.dataset.day;
+      selectedPeriodIdx = parseInt(el.dataset.idx);
+      await loadTodaySnapshotForPeriod();
+      goTo('cr-mark');
+    };
+  });
+}
+
+// ---------- CR: EDIT ROSTER ----------
+function renderCrEdit(){
+  setNav([{ label:'Back', onClick: () => goTo('cr-mark') }]);
+  titleText.textContent = 'Edit Class List';
+  subText.textContent = 'Manage student names and roll numbers';
+  main.innerHTML = `
+    <ul class="roster" id="rosterList"></ul>
+    <div class="add-row">
+      <input type="text" id="newRoll" placeholder="Roll no" style="flex:0 0 90px;">
+      <input type="text" id="newName" placeholder="Student name">
+      <button class="btn-primary" id="addBtn">Add</button>
+    </div>
+    <div class="add-row"><button class="btn-ghost btn-block" id="loadDefaultBtn2">Load default class list</button></div>
+    <div class="add-row"><button class="btn-primary btn-block" id="doneBtn">View report</button></div>
+  `;
+  const list = document.getElementById('rosterList');
+  students.slice().sort((a,b)=>(parseInt(a.roll)||0)-(parseInt(b.roll)||0)).forEach(s => {
+    const li = document.createElement('li');
+    li.className = 'student';
+    li.innerHTML = `<span><span class="roll">#${s.roll ?? ''}</span><span class="name">${escapeHtml(s.name)}</span></span>
+      <button class="remove-btn" data-id="${s.id}">✕</button>`;
+    list.appendChild(li);
+  });
+  list.querySelectorAll('.remove-btn').forEach(btn=>{
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      students = students.filter(s=>s.id !== btn.dataset.id);
+      saveRoster(); render();
+    };
+  });
+  document.getElementById('addBtn').onclick = () => {
+    const rollInput = document.getElementById('newRoll');
+    const nameInput = document.getElementById('newName');
+    const name = nameInput.value.trim();
+    const roll = rollInput.value.trim();
+    if(!name) return;
+    students.push({ id:'s'+Date.now()+Math.random().toString(36).slice(2,6), roll: roll || (students.length+1), name, absent:false });
+    rollInput.value=''; nameInput.value='';
+    saveRoster(); render();
+  };
+  document.getElementById('loadDefaultBtn2').onclick = loadDefaultRoster;
+  document.getElementById('doneBtn').onclick = () => goTo('cr-report');
+}
+
+// ---------- CR: CLASS REPORT ----------
+async function renderCrReport(){
+  setNav([{ label:'Back', onClick: () => goTo('cr-edit') }]);
+  titleText.textContent = 'Monthly Report';
+  subText.textContent = 'Attendance percentage for the whole class';
+  main.innerHTML = `<div class="loading">Loading report...</div>`;
+
+  if(allSnapshots === null) allSnapshots = await loadAllSnapshots();
+
+  if(allSnapshots.length === 0){
+    main.innerHTML = `<div class="no-data">No attendance records yet.</div>`;
+    return;
+  }
+
+  const months = [...new Set(allSnapshots.map(s => monthKeyOf(s.date)))].sort().reverse();
+  if(!selectedMonth || !months.includes(selectedMonth)) selectedMonth = months[0];
+
+  let monthSnaps = allSnapshots.filter(s => monthKeyOf(s.date) === selectedMonth);
+  const subjects = [...new Set(monthSnaps.map(s => s.subject || 'General'))].sort();
+  if(!selectedSubject || (selectedSubject !== 'ALL' && !subjects.includes(selectedSubject))) selectedSubject = 'ALL';
+
+  const filteredSnaps = selectedSubject === 'ALL'
+    ? monthSnaps
+    : monthSnaps.filter(s => (s.subject || 'General') === selectedSubject);
+
+  const tally = {};
+  filteredSnaps.forEach(snap => snap.records.forEach(r => {
+    if(!tally[r.name]) tally[r.name] = { roll:r.roll, present:0, total:0 };
+    tally[r.name].total += 1;
+    if(!r.absent) tally[r.name].present += 1;
+  }));
+
+  let rows = Object.keys(tally).map(name => {
+    const t = tally[name];
+    const pct = t.total ? Math.round((t.present/t.total)*100) : 0;
+    return { name, roll:t.roll, present:t.present, total:t.total, pct };
+  }).sort((a,b)=> (parseInt(a.roll)||0)-(parseInt(b.roll)||0));
+
+  // Build day-by-day trend data for the bar chart
+  const byDate = {};
+  filteredSnaps.forEach(snap => {
+    if(!byDate[snap.date]) byDate[snap.date] = { present:0, total:0 };
+    snap.records.forEach(r => {
+      byDate[snap.date].total += 1;
+      if(!r.absent) byDate[snap.date].present += 1;
+    });
+  });
+  const chartDates = Object.keys(byDate).sort();
+  const chartBars = chartDates.map(d => {
+    const t = byDate[d];
+    const pct = t.total ? Math.round((t.present/t.total)*100) : 0;
+    const barColor = pct>=75?'#2f6d4f':(pct>=50?'#c9601f':'#a13d2c');
+    const dayNum = parseInt(d.split('-')[2]);
+    return `
+      <div style="display:flex;flex-direction:column;align-items:center;flex:1;min-width:22px;">
+        <div style="font-size:10px;color:#6b6455;margin-bottom:2px;">${pct}</div>
+        <div style="width:100%;max-width:26px;height:90px;display:flex;align-items:flex-end;background:#efe9db;border-radius:4px;overflow:hidden;">
+          <div style="width:100%;height:${pct}%;background:${barColor};"></div>
+        </div>
+        <div style="font-size:10px;color:#8a8272;margin-top:4px;">${dayNum}</div>
+      </div>`;
+  }).join('');
+
+  const monthOptions = months.map(m => `<option value="${m}" ${m===selectedMonth?'selected':''}>${monthLabelOf(m)}</option>`).join('');
+  const subjectOptions = `<option value="ALL" ${selectedSubject==='ALL'?'selected':''}>All Subjects</option>` +
+    subjects.map(s => `<option value="${escapeHtml(s)}" ${s===selectedSubject?'selected':''}>${escapeHtml(s)}</option>`).join('');
+
+  main.innerHTML = `
+    <div class="report-header">
+      <select id="monthSelect">${monthOptions}</select>
+      <select id="subjectSelect">${subjectOptions}</select>
+    </div>
+    <div style="font-size:13px;color:#6b6455;margin-bottom:10px;">${filteredSnaps.length} periods recorded</div>
+    <div style="background:#fff;border:1px solid var(--line);border-radius:10px;padding:14px 10px;margin-bottom:18px;">
+      <div style="font-size:12px;color:#6b6455;margin-bottom:10px;">Daily attendance % trend</div>
+      <div style="display:flex;gap:4px;align-items:flex-end;overflow-x:auto;">${chartBars || '<div class="no-data" style="padding:20px;">No data</div>'}</div>
+    </div>
+    <table class="report"><thead><tr><th>Roll</th><th>Student</th><th>Present</th><th>%</th></tr></thead>
+    <tbody id="reportBody"></tbody></table>
+  `;
+  const body = document.getElementById('reportBody');
+  rows.forEach(r => {
+    const cls = r.pct>=75?'high':(r.pct>=50?'mid':'low');
+    const barColor = r.pct>=75?'#2f6d4f':(r.pct>=50?'#c9601f':'#a13d2c');
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>#${r.roll}</td><td>${escapeHtml(r.name)}</td><td>${r.present}/${r.total}</td>
+      <td><span class="bar-wrap"><span class="bar-fill" style="width:${r.pct}%;background:${barColor};"></span></span><span class="pct ${cls}">${r.pct}%</span></td>`;
+    body.appendChild(tr);
+  });
+  document.getElementById('monthSelect').onchange = (e) => { selectedMonth = e.target.value; selectedSubject='ALL'; renderCrReport(); };
+  document.getElementById('subjectSelect').onchange = (e) => { selectedSubject = e.target.value; renderCrReport(); };
+}
+
+// ---------- STUDENT: LOGIN ----------
+function renderStudentLogin(){
+  setNav([{ label:'Home', onClick: () => goTo('role') }]);
+  titleText.textContent = 'My Attendance';
+  subText.textContent = 'Enter your name and roll number';
+  main.innerHTML = `
+    <div class="add-row" style="margin-top:0;">
+      <input type="text" id="rollInput" placeholder="Roll number" style="flex:0 0 110px;">
+    </div>
+    <div class="add-row">
+      <input type="text" id="nameInput" placeholder="Full name">
+    </div>
+    <div class="add-row"><button class="btn-primary btn-block" id="checkBtn">View my record</button></div>
+    <div id="loginError"></div>
+  `;
+  const nameInput = document.getElementById('nameInput');
+  const rollInput = document.getElementById('rollInput');
+  async function tryLogin(){
+    document.getElementById('loginError').innerHTML = '';
+    let ok = true;
+    if(students.length === 0) ok = await loadRoster();
+    if(!ok || students.length === 0){
+      document.getElementById('loginError').innerHTML = `<p class="error-msg">Could not load the class list (connection issue). Please try again in a moment.</p>`;
+      return;
+    }
+    const roll = rollInput.value.trim();
+    const name = nameInput.value.trim().toLowerCase();
+    const match = students.find(s => String(s.roll).trim() === roll && s.name.trim().toLowerCase() === name);
+    if(match){
+      studentSession = match;
+      allSnapshots = null;
+      goTo('student-report');
+    }else{
+      document.getElementById('loginError').innerHTML = `<p class="error-msg">Name or roll number didn't match. Please check the spelling and roll number, then try again.</p>`;
+    }
+  }
+  document.getElementById('checkBtn').onclick = tryLogin;
+  nameInput.addEventListener('keydown', e => { if(e.key==='Enter') tryLogin(); });
+  rollInput.focus();
+}
+
+// ---------- STUDENT: REPORT ----------
+async function renderStudentReport(){
+  setNav([{ label:'Back', onClick: () => { studentSession=null; goTo('student-login'); } }]);
+  titleText.textContent = studentSession.name;
+  subText.textContent = `Roll #${studentSession.roll}`;
+  main.innerHTML = `<div class="loading">Loading...</div>`;
+
+  if(allSnapshots === null) allSnapshots = await loadAllSnapshots();
+
+  const myRecords = [];
+  allSnapshots.forEach(snap => {
+    const rec = snap.records.find(r => r.id === studentSession.id);
+    if(rec) myRecords.push({ date: snap.date, subject: snap.subject || '', absent: rec.absent });
+  });
+
+  if(myRecords.length === 0){
+    main.innerHTML = `<div class="no-data">No attendance records yet.</div>`;
+    return;
+  }
+
+  const months = [...new Set(myRecords.map(r=>monthKeyOf(r.date)))].sort().reverse();
+  if(!selectedMonth || !months.includes(selectedMonth)) selectedMonth = months[0];
+
+  const monthRecords = myRecords.filter(r => monthKeyOf(r.date) === selectedMonth).sort((a,b)=>a.date.localeCompare(b.date));
+  const presentDays = monthRecords.filter(r=>!r.absent).length;
+  const totalDays = monthRecords.length;
+  const pct = totalDays ? Math.round((presentDays/totalDays)*100) : 0;
+  const cls = pct>=75?'high':(pct>=50?'mid':'low');
+
+  const options = months.map(m => `<option value="${m}" ${m===selectedMonth?'selected':''}>${monthLabelOf(m)}</option>`).join('');
+
+  // Per-subject breakdown
+  const bySubject = {};
+  monthRecords.forEach(r => {
+    const key = r.subject || 'General';
+    if(!bySubject[key]) bySubject[key] = { present:0, total:0 };
+    bySubject[key].total += 1;
+    if(!r.absent) bySubject[key].present += 1;
+  });
+  const subjectRows = Object.keys(bySubject).sort().map(subj => {
+    const t = bySubject[subj];
+    const p = t.total ? Math.round((t.present/t.total)*100) : 0;
+    const c = p>=75?'high':(p>=50?'mid':'low');
+    const barColor = p>=75?'#2f6d4f':(p>=50?'#c9601f':'#a13d2c');
+    return `
+      <div class="day-row" style="align-items:center;">
+        <span>${escapeHtml(subj)}</span>
+        <span>
+          <span class="bar-wrap"><span class="bar-fill" style="width:${p}%;background:${barColor};"></span></span>
+          <span class="pct ${c}">${p}%</span>
+          <span style="color:#8a8272;font-size:12px;margin-left:6px;">(${t.present}/${t.total})</span>
+        </span>
+      </div>`;
+  }).join('');
+
+  const donutColor = pct>=75?'#2f6d4f':(pct>=50?'#c9601f':'#a13d2c');
+  const circumference = 2 * Math.PI * 42;
+  const dashLength = (pct/100) * circumference;
+
+  main.innerHTML = `
+    <div class="report-header"><select id="monthSelect">${options}</select></div>
+    <div class="big-pct">
+      <svg width="140" height="140" viewBox="0 0 100 100" style="transform:rotate(-90deg);">
+        <circle cx="50" cy="50" r="42" fill="none" stroke="#e6e0d0" stroke-width="12"></circle>
+        <circle cx="50" cy="50" r="42" fill="none" stroke="${donutColor}" stroke-width="12"
+          stroke-dasharray="${dashLength} ${circumference}" stroke-linecap="round"></circle>
+      </svg>
+      <div class="num pct ${cls}" style="margin-top:-96px;">${pct}%</div>
+      <div class="label" style="margin-top:44px;">Overall — ${presentDays} / ${totalDays} periods present — ${monthLabelOf(selectedMonth)}</div>
+    </div>
+    <h3 style="font-size:14px;margin:0 0 8px;">By subject</h3>
+    <div style="background:#fff;border:1px solid var(--line);border-radius:10px;overflow:hidden;margin-bottom:18px;">${subjectRows}</div>
+    <h3 style="font-size:14px;margin:0 0 8px;">Day by day</h3>
+    <div style="background:#fff;border:1px solid var(--line);border-radius:10px;overflow:hidden;" id="dayList"></div>
+  `;
+  const dayList = document.getElementById('dayList');
+  monthRecords.slice().reverse().forEach(r => {
+    const row = document.createElement('div');
+    row.className = 'day-row';
+    row.innerHTML = `<span>${dateLabelOf(r.date)}${r.subject ? ' · ' + escapeHtml(r.subject) : ''}</span>
+      <span class="day-status" style="background:${r.absent?'#eeccc0':'#d4e5d8'};color:${r.absent?'var(--absent)':'var(--present)'};">${r.absent?'Absent':'Present'}</span>`;
+    dayList.appendChild(row);
+  });
+  document.getElementById('monthSelect').onchange = (e) => { selectedMonth = e.target.value; renderStudentReport(); };
+}
+
+render();
+</script>
+
+</body>
+</html>
